@@ -1,167 +1,260 @@
-# POS Examination Starter
+# Nova Manufacturing Spring Boot Examination Starter
 
-Starter Spring Boot application for the **Practical Examination - Point of Sale (POS) System**.
+Starter project for the **Nova Manufacturing Employee, Production, Sales and Payroll Management System** practical examination.
 
-## Technology
+The examination is six hours, carries 100 marks, and requires Java 21, Spring Boot, Spring Data JPA, Jakarta Bean Validation, and MySQL or PostgreSQL.
 
-- Java 21
-- Spring Boot 3.5
-- Spring Web
-- Spring Data JPA
-- Jakarta Bean Validation
-- MySQL JDBC driver
-- PostgreSQL JDBC driver
-- Springdoc OpenAPI 2.8.x for Spring Boot 3
-
-## Run the starter
+## Run the application
 
 ```bash
 mvn spring-boot:run
 ```
 
-The starter uses the MySQL profile by default. Update the credentials in
-`src/main/resources/application-mysql.properties` before starting.
+The current configuration uses:
 
-The database credentials use environment variables. For MySQL, for example:
+```text
+Port: 9090
+Context path: /nova-service
+Database: MySQL by default
+```
+
+Set database credentials through environment variables:
 
 ```bash
 export DB_USERNAME=root
-export DB_PASSWORD=your-mysql-password
+export DB_PASSWORD=your-password
 ```
 
-To use PostgreSQL instead, change the profile in `application.properties`:
+To use PostgreSQL, change `spring.profiles.active` to `postgresql` in
+`src/main/resources/application.properties`.
 
-```properties
-spring.profiles.active=postgresql
-```
+The application expects a database named `pos_db`. See the profile files:
 
-Then update the credentials in `src/main/resources/application-postgresql.properties`.
+- `src/main/resources/application-mysql.properties`
+- `src/main/resources/application-postgresql.properties`
 
-The application expects a database named `pos_db`. The configured JPA setting
-`ddl-auto=update` creates and updates tables from the students' entity classes.
+## Examination objective
 
-Check that the application is running:
+Build a REST backend for Nova Manufacturing (Pvt) Ltd. The system manages employees, salary revisions, projects, production batches, sales, incentives, bonuses, payroll, and a management dashboard.
 
-```bash
-curl http://localhost:8080/api/v1/test
-```
+Only the following six graded endpoints are required. Department, project, and product CRUD endpoints are not required.
 
-The response follows the examination response contract:
+| # | Method | Endpoint | Marks |
+|---|---|---|---:|
+| 1 | POST | `/api/employees` | 15 |
+| 2 | PATCH | `/api/employees/{id}/salary` | 10 |
+| 3 | POST | `/api/production` | 15 |
+| 4 | POST | `/api/sales` | 20 |
+| 5 | POST | `/api/payroll/calculate` | 25 |
+| 6 | GET | `/api/dashboard?year=YYYY&month=M` | 15 |
 
-```json
-{
-  "data": {
-    "application": "POS Examination Starter",
-    "message": "The Spring Boot application is running."
-  },
-  "status": {
-    "code": "200",
-    "message": "Test request successful"
-  }
-}
-```
+The starter `TestController` is only a development/sample controller. It is not one of the six examination APIs.
 
-## Common response and exception pattern
+## Endpoint requirements
 
-The `com.example.pos.network` package provides the common pattern for all student endpoints:
+### 1. Register employee
 
-- `ResponseData<T>` for one data object.
-- `ResponseDataPack<T>` for a list of data objects.
-- `NetworkUtils.wrap(...)` to produce the HTTP response.
-- `GlobalExceptionHandler` for validation, malformed JSON, and unexpected errors.
-- Every response contains the top-level `data` and `status` nodes.
-- `status.code` matches the HTTP status code and `status.message` contains the success or error message.
+`POST /api/employees`
 
-Example service/controller usage:
+Accept employee code, name, email, joining date, department, designation, optional supervisor, basic salary, and project assignments containing project identifiers and allocation percentages.
 
-```java
-return NetworkUtils.wrap(ResponseData.success(product, "Product retrieved successfully"));
-```
+Rules include:
 
-For a collection:
+- Department and projects must exist; department must be active.
+- Employee code and email must be unique.
+- Basic salary must be positive.
+- Project assignments must not repeat a project.
+- Each allocation must be greater than zero and total allocation must not exceed 100%.
+- A supervisor must be an active employee in the same department with `SUPERVISOR` or `MANAGER` designation.
+- Employee and assignments must be saved atomically.
 
-```java
-return NetworkUtils.wrap(ResponseDataPack.success(products, "Products retrieved successfully"));
-```
+### 2. Revise employee salary
 
-For a known error:
+`PATCH /api/employees/{id}/salary`
 
-```java
-return NetworkUtils.error("Product not found", HttpStatus.NOT_FOUND);
-```
+Accept a new positive basic salary and revision reason. Reject unknown employees, apply the revision date on the request date, preserve the previous salary, and save the employee update and salary history atomically.
 
-The sample test flow demonstrates the intended service split:
+### 3. Record production
 
-- `TestServiceImpl` is the repository-facing implementation. It performs persistence, mapping, transactions, and database business operations.
-- `TestMapper` owns all `Test` entity/DTO conversions in the `mapper` package.
-- `TestService` is the service facade. It delegates to `TestServiceImpl` and converts unexpected failures into `ResponseData` or `ResponseDataPack` errors.
-- Controllers call `NetworkUtils.wrap(...)` to convert the service result into the final `ResponseEntity`.
+`POST /api/production`
 
-## Native query sample
+Accept product, production date, quantity produced, material cost, direct labour cost, other cost, and production supervisor.
 
-The sample `Test` entity now contains a code, category, status, priority, and
-automatic created/updated timestamps. `ITestRepository` contains a native SQL
-example with filtering and sorting:
+- Supervisor must be an active Production employee with `SUPERVISOR` or `MANAGER` designation.
+- Quantity must be greater than zero.
+- Costs cannot be negative.
+- `total production cost = material cost + labour cost + other cost`.
+- `unit production cost = total production cost / quantity produced`.
+- Persist calculated costs and initialize remaining stock to produced quantity.
 
-```java
-@Query(value = "SELECT * FROM test "
-        + "WHERE category = :category AND status = :status "
-        + "ORDER BY priority DESC, created_at DESC", nativeQuery = true)
-List<Test> findByCategoryAndStatusNative(String category, String status);
-```
+### 4. Record sale
 
-It is available through `TestServiceImpl.findByCategoryAndStatusNative()` and
-`TestService.findTestsByCategoryAndStatusNative()`, while the normal controller
-continues to use the standard Spring Data JPA query.
+`POST /api/sales`
 
-## Test controller sample endpoints
+Accept production batch, sales employee, sale date, quantity sold, and actual unit selling price.
 
-- `GET /api/v1/test`
-- `GET /api/v1/test/{id}`
-- `POST /api/v1/test`
-- `PUT /api/v1/test/{id}`
-- `DELETE /api/v1/test/{id}`
-- `GET /api/v1/test/search?category=backend&status=ACTIVE`
+- Only an active Sales employee may sell.
+- Unit price and quantity must be positive.
+- Quantity must not exceed remaining batch inventory.
+- `revenue = quantity sold x unit selling price`.
+- `COGS = quantity sold x stored batch unit cost`.
+- `gross profit = revenue - COGS`.
+- Persist the sale and reduce batch inventory atomically.
+- Protect against concurrent sales overselling a batch.
+- No cancellation endpoint is required.
 
-## Student task
+### 5. Finalize monthly payroll
 
-Extend this application by implementing the six required operations from the examination document:
+`POST /api/payroll/calculate`
 
-1. `POST /api/v1/products`
-2. `GET /api/v1/products`
-3. `PUT /api/v1/products/{productId}`
-4. `POST /api/v1/sales`
-5. `GET /api/v1/sales/{saleId}`
-6. `GET /api/v1/sales/summary?date={date}`
+Accept a year and month. Only a completed calendar month is valid. The endpoint must calculate and persist employee sales incentives, the company bonus pool, individual bonuses, and final payroll in one transaction. Repeating an already finalized month must be rejected.
 
-Students are expected to add the entity, DTO, repository, service, controller, validation, exception handling, and transaction-management code required by the examination. The starter does not implement the examination endpoints.
+Progressive employee sales incentive rates:
 
-## Suggested package structure
+| Completed monthly sales revenue slice | Rate |
+|---|---:|
+| First LKR 500,000 | 2% |
+| Next LKR 500,000 | 3% |
+| Next LKR 1,000,000 | 5% |
+| Above LKR 2,000,000 | 7% |
+
+Company bonus pool based on gross margin:
+
+| Gross margin | Bonus pool |
+|---|---:|
+| Below 10% | 0% of revenue |
+| 10% to below 20% | 2% of revenue |
+| 20% to below 30% | 4% of revenue |
+| 30% and above | 6% of revenue |
+
+Designation weights:
+
+| Designation | Weight |
+|---|---:|
+| MANAGER | 3.0 |
+| SUPERVISOR | 2.0 |
+| SENIOR_EMPLOYEE | 1.5 |
+| EMPLOYEE | 1.0 |
+
+Individual bonus is calculated from the designation weight, total eligible weight, and bonus pool. Round pool and payments to two decimal places using the specified largest-remainder distribution rule so distributed bonuses equal the rounded pool exactly.
+
+Final salary is:
 
 ```text
-com.example.pos
-├── common.api
-├── product
-│   ├── controller
-│   ├── dto
-│   ├── entity
-│   ├── repository
-│   └── service
-├── sale
-│   ├── controller
-│   ├── dto
-│   ├── entity
-│   ├── repository
-│   └── service
-└── test
+gross monthly salary = basic salary + sales incentive + company bonus
 ```
 
-## Important examination constraints
+### 6. Management dashboard
 
-- Use `/api/v1` as the API base path.
-- Use `data` and `status` in every API response.
-- Keep business logic in services, not controllers.
-- Do not access repositories directly from controllers.
-- Use Spring Data JPA and a relational database for persistence.
-- Process a sale and update stock in one transaction.
-- Do not trust client-supplied prices, totals, sale dates, or sale statuses.
+`GET /api/dashboard?year=YYYY&month=M`
+
+Return current and selected-month information, including employee counts and salary totals by department, production quantity and cost, units sold, revenue, COGS, gross profit, current inventory, monthly bonus pool, finalized incentives and payroll when available, and the top three sales employees ranked by monthly revenue.
+
+Use database aggregates where appropriate and clearly distinguish current snapshots from period-specific values.
+
+## Database reference
+
+The reference document provides suggested attributes. Students must independently design primary keys, foreign keys, uniqueness rules, indexes, relationship cardinality, ownership, and JPA mappings.
+
+Required business tables and suggested attributes:
+
+| Table | Suggested attributes |
+|---|---|
+| Department | `department_id`, `department_code`, `department_name`, `description`, `status` |
+| Employee | `employee_id`, `employee_code`, `full_name`, `email`, `phone_number`, `joined_date`, `department_id`, `designation`, `supervisor_id`, `basic_salary`, `initial_basic_salary`, `status` |
+| Project | `project_id`, `project_code`, `project_name`, `project_type`, `start_date`, `end_date`, `status` |
+| Employee Project Assignment | `assignment_id`, `employee_id`, `project_id`, `allocation_percentage`, `assigned_date` |
+| Salary History | `salary_history_id`, `employee_id`, `previous_salary`, `new_salary`, `effective_date`, `reason` |
+| Product | `product_id`, `product_code`, `product_name`, `description`, `default_selling_price`, `status` |
+| Production Batch | `batch_id`, `batch_code`, `product_id`, `production_date`, `quantity_produced`, `remaining_quantity`, `material_cost`, `labor_cost`, `other_cost`, `total_production_cost`, `unit_production_cost`, `production_supervisor_id` |
+| Sale | `sale_id`, `batch_id`, `sales_employee_id`, `sale_date`, `quantity_sold`, `unit_selling_price`, `total_revenue`, `cost_of_goods_sold`, `gross_profit` |
+| Monthly Payroll | `payroll_id`, `employee_id`, `payroll_year`, `payroll_month`, `basic_salary`, `monthly_sales_revenue`, `sales_incentive`, `company_bonus`, `gross_salary`, `calculated_at`, `status` |
+| Monthly Payroll Summary | `summary_id`, `payroll_year`, `payroll_month`, `monthly_revenue`, `monthly_cogs`, `monthly_gross_profit`, `gross_margin_percentage`, `bonus_pool`, `total_sales_incentives`, `total_gross_payroll`, `status`, `calculated_at` |
+
+## Reference master data
+
+Departments:
+
+```text
+PROD  - Production       - ACTIVE
+SALES - Sales            - ACTIVE
+ADMIN - Administration   - ACTIVE
+FIN   - Finance          - ACTIVE
+```
+
+Projects:
+
+```text
+PRD-001  Assembly Line Optimization  PRODUCTION  ACTIVE
+PRD-002  Packaging Improvement       PRODUCTION  ACTIVE
+SAL-001  Regional Sales Growth       SALES       ACTIVE
+SAL-002  Corporate Client Outreach   SALES       ACTIVE
+```
+
+Products:
+
+```text
+P-100  Storage Box        LKR 1,200  ACTIVE
+P-200  Desk Organizer     LKR   850  ACTIVE
+P-300  Plastic Container  LKR   650  ACTIVE
+P-400  Packaging Tray     LKR   500  ACTIVE
+P-500  Utility Basket     LKR 1,450  ACTIVE
+```
+
+Initial employees include four active reference managers/supervisors:
+
+```text
+EMP-M001  Amara Perera       PROD   MANAGER     150,000
+EMP-M002  Nimal Fernando     SALES  MANAGER     160,000
+EMP-S001  Kavindi Silva      PROD   SUPERVISOR  110,000
+EMP-S002  Ruwan Jayasinghe   SALES  SUPERVISOR  115,000
+```
+
+Allowed/reference values:
+
+- Department and employee status: `ACTIVE`, `INACTIVE`
+- Designation: `MANAGER`, `SUPERVISOR`, `SENIOR_EMPLOYEE`, `EMPLOYEE`
+- Project type: `PRODUCTION`, `SALES`
+- Project status: `PLANNED`, `ACTIVE`, `COMPLETED`
+- Payroll status: `FINALIZED`
+- Allocation percentage: greater than 0 and at most 100
+- Money: exact decimal values with two decimal places
+- Production and sales quantities: positive integers
+
+## Technical rules
+
+- Use Java 21, Spring Boot, Spring Data JPA, and MySQL or PostgreSQL.
+- Use controller/service/repository separation and DTOs.
+- Keep business logic in service classes.
+- Use centralized exception handling.
+- Use `BigDecimal` or equivalent exact decimal types for money.
+- Store monetary values at two decimal places and use `HALF_UP` where ordinary financial rounding is required.
+- All responses must use JSON with `status` (`code`, `message`) and `data`; HTTP status and status code must agree.
+- Return validation errors as 400, not-found errors as 404, and conflicts such as duplicate finalization or uniqueness violations as 409.
+- Do not implement frontend, authentication, authorization, logging, or additional exam endpoints.
+
+## Submission requirements
+
+Submit:
+
+- Source project
+- Database schema
+- Simple entity-relationship diagram
+- Seed/master data
+- Sample transactions
+- Postman collection containing requests and example responses for all six endpoints
+
+The examiner will test both successful and rejected operations.
+
+## Suggested six-hour schedule
+
+| Activity | Minutes |
+|---|---:|
+| Database and setup | 55 |
+| Employee registration | 45 |
+| Salary revision | 25 |
+| Production | 40 |
+| Sales and inventory | 55 |
+| Monthly payroll | 85 |
+| Dashboard and testing | 55 |
+| **Total** | **360** |
