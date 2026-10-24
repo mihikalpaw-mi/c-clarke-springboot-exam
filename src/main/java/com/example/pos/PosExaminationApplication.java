@@ -10,3 +10,5 @@ public class PosExaminationApplication {
         SpringApplication.run(PosExaminationApplication.class, args);
     }
 }
+
+

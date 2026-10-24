@@ -6,4 +6,6 @@ public class EndpointConstants {
 
     public static final String TEST = "/test";
 
+    public static final String PRODUCTS = "/products" ;
+
 }
